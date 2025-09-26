@@ -1,0 +1,85 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+typedef enum Tries_Estado{
+    FINAL,
+    NAO
+}Tries_Estado;
+
+typedef struct Tries{
+    int val;
+    Tries_Estado* estado;
+    Tries* filhos[26];
+}Tries;
+
+Tries* Inserir(Tries** raiz, unsigned char* chave,int val, int n);
+Tries* Inserir_R(Tries** raiz, unsigned char* chave, int val, int n, int p);
+Tries* Criar_Nodo();
+
+Tries* Buscar(Tries* raiz, unsigned char* chave, int n);
+Tries* Buscar_R(Tries* raiz, unsigned char* chave, int n, int p);
+
+int Get_Val(Tries* raiz);
+
+
+int main(){
+    Tries* raiz = Criar_Nodo();
+
+    FILE* arquivo = fopen("\\lexico.txt","r");
+
+
+
+    return 0;
+}
+
+
+Tries* Criar_Nodo(){
+    Tries* no;
+
+    no = malloc(sizeof(Tries));
+
+    for( int i = 0; i<26; i++ ){
+        no->filhos[i] == NULL;
+    }
+
+    return no;
+}
+
+Tries* Inserir(Tries** raiz, unsigned char* chave,int val, int n){
+    return Inserir_R(raiz, chave,val, strlen(chave),0);
+}
+
+Tries* Inserir_R(Tries** raiz, unsigned char* chave,int val, int n, int p){
+    if ( raiz == NULL ){
+        *raiz = Criar_Nodo();
+    }
+
+    if( n == p ){
+        (*raiz)->val = val;
+        (*raiz)->estado = NAO;
+
+        return;
+    }
+
+    return Inserir_R(&(*raiz)->filhos[chave[n]], chave, val,n,p+1 );
+}
+
+Tries* Buscar(Tries* raiz, unsigned char* chave, int n){
+    return Buscar_R(raiz, chave, strlen(chave),0);
+}
+
+Tries* Buscar(Tries* raiz, unsigned char* chave, int n, int p){
+        if ( raiz == NULL) return NULL;
+
+        if ( n == p ) return raiz && Get_Val(raiz);
+
+        Buscar_R(raiz->filhos[chave[n]],chave,n,p+1);
+}
+
+int Get_Val(Tries* raiz){
+    if ( raiz != NULL ){
+        return raiz->val;
+    }
+    else return NULL;
+}
