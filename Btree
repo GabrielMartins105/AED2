@@ -1,55 +1,44 @@
-/* sga.c - Protótipo SGA com persistência e índices (B-tree em memória)
- *
- * - Dados em: alunos.dat, disciplinas.dat, matriculas.dat  (registros binários)
- * - Índices em: alunos.idx, disciplinas.idx, matriculas.idx (lista de pares key->offset)
- * - B-tree (ORDEM = 4) indexes keys -> offsets (em memória)
- *
- * Compilar: gcc -std=c11 -O2 sga.c -o sga
- *
- * Limitações/observações:
- * - Para disciplinas usei um hash (unsigned int) como chave. Verifico string para evitar colisões.
- * - Exclusões marcam registros inactive (tombstone). Depois reescrevo .idx correspondentes escaneando .dat.
- */
-
+//sga.c - Protótipo SGA com persistência e índices (B-tree em memória)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
 
-#define ORDEM 4            /* número máximo de filhos por nó */
+#define ORDEM 4            
 typedef enum { SIM = 1, NAO = 0 } Folha;
 
-/* Tipo de chave da B-tree (usamos uint64_t para segurança contra overflow) */
+
 typedef uint64_t KeyType;
-typedef int64_t  OffType; /* offset no arquivo (ftell -> long -> cast) */
+typedef int64_t  OffType; 
 
 typedef struct BTreeNode {
     Folha folha;
     int qnt_keys;
-    KeyType chaves[ORDEM - 1];       /* max keys */
-    OffType offsets[ORDEM - 1];      /* offsets correspondentes */
+    KeyType chaves[ORDEM - 1];       
+    OffType offsets[ORDEM - 1];     
     struct BTreeNode *filhos[ORDEM];
 } BTreeNode;
 
-/* ----- Estruturas de dados persistidos ----- */
-/* Aluno: chave = matricula (int) */
+                
+            /// ALUNO////
 typedef struct {
     int matricula;
     char nome[128];
-    int active; /* 1 = ativo, 0 = excluído */
+    int active; 
 } AlunoRec;
 
-/* Disciplina: armazenamos codigo string (ex: INF001) e nome.
- * chave de índice = hash(codigo) (uint64_t) */
+
+
+        /* DISCIPLINAS*/
+        
 typedef struct {
-    char codigo[32]; /* ex: "INF001" */
+    char codigo[32]; 
     char nome[128];
     int active;
 } DisciplinaRec;
 
-/* Matricula: id sequencial, referencia matricula_aluno e codigo_hash,
- * media_final (float) */
+        /// MATRICULA ////
 typedef struct {
     int id_matricula;
     int matricula_aluno;
@@ -58,7 +47,7 @@ typedef struct {
     int active;
 } MatriculaRec;
 
-/* ----- protótipos B-tree (chave -> offset) ----- */
+/* ----- protótipos B-tree ----- */
 BTreeNode* criar_BTree(Folha folha);
 void traverse(BTreeNode *root);
 void split_child(BTreeNode *pai, int idx);
@@ -75,6 +64,10 @@ void carregar_indices();
 void rebuild_index_alunos();
 void rebuild_index_disciplinas();
 void rebuild_index_matriculas();
+void lerArqAlunos(FILE* arquivo);
+void lerArqDisciplinas(FILE* arquivo);
+void lerArqMatriculas(FILE* arquivo);
+
 
 OffType append_aluno(const AlunoRec *r);
 OffType append_disciplina(const DisciplinaRec *r);
@@ -109,7 +102,7 @@ const char *ALUNOS_DAT = "alunos.dat";
 const char *DISC_DAT = "disciplinas.dat";
 const char *MATR_DAT = "matriculas.dat";
 
-const char *ALUNOS_IDX = "alunos.csv";
+const char *ALUNOS_IDX = "alunos.idx";
 const char *DISC_IDX = "disciplinas.idx";
 const char *MATR_IDX = "matriculas.idx";
 
@@ -456,9 +449,10 @@ int update_matricula_media_by_id(int id, float new_media) {
     return 1;
 }
 
-/* ----- Operações CRUD (alto nível) ----- */
+        /////////////////////////////////////////////
+        /////--------*ALUNOS*--------------/////////
+        //////////////////////////////////////////
 
-/* Alunos */
 int criar_aluno(int matricula, const char *nome) {
     if (buscar_idx(idx_alunos, (KeyType)matricula) != -1) return 0; /* já existe */
     AlunoRec r; r.matricula = matricula; r.active = 1;
@@ -500,7 +494,6 @@ int atualizar_aluno(int matricula, const char *novo_nome) {
     return 1;
 }
 
-/* deletar aluno + cascade: remove matrículas associadas */
 int deletar_aluno(int matricula) {
     OffType off = buscar_idx(idx_alunos, (KeyType)matricula);
     if (off < 0) return 0;
@@ -526,7 +519,13 @@ int deletar_aluno(int matricula) {
     return 1;
 }
 
-/* Disciplinas (usa hash como chave no índice) */
+//////////////////////////////////////////////////////
+
+
+        /////////////////////////////////////////////
+        /////--------*DISCIPLINAS*--------------/////////
+        //////////////////////////////////////////
+
 int criar_disciplina(const char *codigo, const char *nome) {
     uint64_t h = hash_str(codigo);
     if (buscar_idx(idx_disciplinas, (KeyType)h) != -1) {
@@ -615,7 +614,19 @@ int deletar_disciplina(const char *codigo) {
     return 1;
 }
 
-/* Matriculas */
+       /////////////////////////////////////////////
+        /////--------*MATRICULAS*--------------/////////
+        //////////////////////////////////////////
+
+void lerArqMatriculas(FILE* arquivo){
+    char linha[100];
+
+    while(fgets(linha,sizeof(linha),arquivo) != NULL){
+        char cod;
+        int matricula;
+    }
+}
+
 int criar_matricula(int matricula_aluno, const char *codigo, float media_final) {
     /* verificar existência das chaves estrangeiras */
     if (buscar_idx(idx_alunos, (KeyType)matricula_aluno) == -1) return 0;
@@ -670,7 +681,7 @@ int atualizar_media_matricula(int id_matricula, float nova_media) {
     return update_matricula_media_by_id(id_matricula, nova_media);
 }
 
-/* ----- Menu simples pra testar funcionalidades ----- */
+/* ----- MENU ----- */
 void menu() {
     carregar_indices();
     printf("SGA inicializado.\n");
@@ -894,13 +905,84 @@ void menu() {
     }
 }
 
+void lerArqAlunos(FILE* arquivo){
+    char *linha[100];
+    
+    while (fgets(linha, sizeof(linha), arquivo) != NULL) {
+        char nome[50];
+        int numero;
+        char *token;
+        
+        token = strtok(linha, ",");
+        if (token != NULL) {
+            strncpy(nome, token, 50);
+            nome[50 - 1] = '\0';  
+        }
+        
+        
+        token = strtok(NULL, ",");
+        if (token != NULL) {
+            sscanf(token, "%d", &numero);
+        }
+        
+        criar_aluno(numero,nome);
+        printf("Nome: %s, Número: %d\n", nome, numero);
+        
+        
+    }
+}
 
+void lerArqDisciplinas(FILE* arquivo){
+    char *linha[100];
+
+    while (fgets(linha,sizeof(linha),arquivo) != NULL){
+        char cod[5];
+        char nome;
+        char *token;
+
+        token = strtok(linha,",");
+        if (token != NULL){
+            strncpy(cod,token,6);
+        }
+
+        token = strtok(NULL, ",");
+        if (token != NULL) {
+            strncpy(nome,token,50);
+        }
+
+        criar_disciplina(cod,nome);
+    }
+}
 
 int main(void) {
-    printf(
-        "Inicializando SGA (arquivos: %s, %s, %s)\n",
-        ALUNOS_DAT, DISC_DAT, MATR_DAT
-    );
+   
+    
+    
+    BTreeNode *BTreeAluno = criar_BTree(SIM);
+    BTreeNode *BTreeDisciplinas = criar_BTree(SIM);
+    BTreeNode *BTreeMatriculas = criar_BTree(SIM);
+////////////////////////////////////    
+    FILE* alunos;
+
+    alunos = fopen("alunos.cvs","r");
+    lerArqAlunos(alunos);
+
+    fclose(alunos);
+//////////////////////////////////////
+    FILE* cadeiras;
+
+    cadeiras = fopen("disciplinas.cvs","r");
+    lerArqDisciplinas(cadeiras);
+
+    fclose(cadeiras);
+///////////////////////////////////
+    FILE* matriculas;
+
+    matriculas = fopen("matriculas.cvs","r");
+    lerArqMatriculas(matriculas);
+
+    fclose(matriculas);
+//////////////////////////////////
 
     carregar_indices();
     menu();
