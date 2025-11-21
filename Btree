@@ -1,53 +1,50 @@
-//sga.c - Protótipo SGA com persistência e índices (B-tree em memória)
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <errno.h>
 
-#define ORDEM 4            
+int proxima_matricula_id = 1;
+
+#define ORDEM 4
 typedef enum { SIM = 1, NAO = 0 } Folha;
 
-
 typedef uint64_t KeyType;
-typedef int64_t  OffType; 
+typedef int64_t  OffType;
 
 typedef struct BTreeNode {
     Folha folha;
     int qnt_keys;
-    KeyType chaves[ORDEM - 1];       
-    OffType offsets[ORDEM - 1];     
+    KeyType chaves[ORDEM - 1];
+    OffType offsets[ORDEM - 1];
     struct BTreeNode *filhos[ORDEM];
 } BTreeNode;
 
-                
-            /// ALUNO////
+/// ALUNO
 typedef struct {
     int matricula;
     char nome[128];
-    int active; 
+    int active;
 } AlunoRec;
 
-
-
-        /* DISCIPLINAS*/
-        
+/* DISCIPLINAS */
 typedef struct {
-    char codigo[32]; 
+    char codigo[32];
     char nome[128];
     int active;
 } DisciplinaRec;
 
-        /// MATRICULA ////
+/* MATRICULA */
 typedef struct {
     int id_matricula;
     int matricula_aluno;
-    uint64_t codigo_hash;
+    int codigo_disciplina;
     float media_final;
     int active;
 } MatriculaRec;
 
-/* ----- protótipos B-tree ----- */
 BTreeNode* criar_BTree(Folha folha);
 void traverse(BTreeNode *root);
 void split_child(BTreeNode *pai, int idx);
@@ -55,11 +52,10 @@ void inserirNonFull(BTreeNode *no, KeyType key, OffType offset);
 void inserir_idx(BTreeNode **raiz, KeyType key, OffType offset);
 OffType buscar_idx(BTreeNode *root, KeyType key); /* retorna offset ou -1 */
 void free_tree(BTreeNode *root);
+BTreeNode* carregar_arvore(const char *nome_arquivo);
 
-/* ----- protótipos sistema de arquivos / índices ----- */
 unsigned long hash_str(const char *s);
 
-/* gerenciar arquivos/índices */
 void carregar_indices();
 void rebuild_index_alunos();
 void rebuild_index_disciplinas();
@@ -67,7 +63,6 @@ void rebuild_index_matriculas();
 void lerArqAlunos(FILE* arquivo);
 void lerArqDisciplinas(FILE* arquivo);
 void lerArqMatriculas(FILE* arquivo);
-
 
 OffType append_aluno(const AlunoRec *r);
 OffType append_disciplina(const DisciplinaRec *r);
@@ -77,26 +72,24 @@ int mark_aluno_inactive_at_offset(OffType off);
 int mark_disciplina_inactive_at_offset(OffType off);
 int mark_matricula_inactive_at_offset(OffType off);
 
-/* operações CRUD (API simples) */
 int criar_aluno(int matricula, const char *nome);
 int ler_aluno(int matricula, AlunoRec *out);
 int atualizar_aluno(int matricula, const char *novo_nome);
-int deletar_aluno(int matricula); /* cascata: remove matrículas */
+int deletar_aluno(int matricula); 
 
 int criar_disciplina(const char *codigo, const char *nome);
 int ler_disciplina(const char *codigo, DisciplinaRec *out);
 int atualizar_disciplina(const char *codigo, const char *novo_nome);
-int deletar_disciplina(const char *codigo); /* cascata: remove matrículas */
+int deletar_disciplina(const char *codigo); 
 
 int criar_matricula(int matricula_aluno, const char *codigo, float media_final);
 int ler_matricula(int id_matricula, MatriculaRec *out);
 int deletar_matricula(int id_matricula);
 int atualizar_media_matricula(int id_matricula, float nova_media);
 
-/* ----- arquivos e raízes em memória ----- */
-BTreeNode *idx_alunos = NULL;        /* key = matricula (KeyType) */
-BTreeNode *idx_disciplinas = NULL;   /* key = hash(codigo) */
-BTreeNode *idx_matriculas = NULL;    /* key = id_matricula */
+BTreeNode *idx_alunos = NULL;       
+BTreeNode *idx_disciplinas = NULL;   
+BTreeNode *idx_matriculas = NULL;    
 
 const char *ALUNOS_DAT = "alunos.dat";
 const char *DISC_DAT = "disciplinas.dat";
@@ -106,7 +99,6 @@ const char *ALUNOS_IDX = "alunos.idx";
 const char *DISC_IDX = "disciplinas.idx";
 const char *MATR_IDX = "matriculas.idx";
 
-/* ----- Implementação B-tree (chave -> offset) ----- */
 BTreeNode *criar_BTree(Folha folha) {
     BTreeNode *novo = (BTreeNode*)malloc(sizeof(BTreeNode));
     if (!novo) { perror("malloc"); exit(EXIT_FAILURE); }
@@ -117,7 +109,6 @@ BTreeNode *criar_BTree(Folha folha) {
     return novo;
 }
 
-/* busca: retorna offset (>=0) se encontrar, -1 caso contrário */
 OffType buscar_idx(BTreeNode *root, KeyType key) {
     if (!root) return -1;
     int i = 0;
@@ -127,11 +118,34 @@ OffType buscar_idx(BTreeNode *root, KeyType key) {
     return buscar_idx(root->filhos[i], key);
 }
 
+BTreeNode* carregar_arvore(const char *nome_arquivo) {
+    FILE *f = fopen(nome_arquivo, "rb");
+    if (!f) {
+        return NULL;
+    }
+
+    BTreeNode *raiz = NULL;
+    KeyType key;
+    OffType off;
+
+    while (1) {
+        size_t r1 = fread(&key, sizeof(KeyType), 1, f);
+        size_t r2 = fread(&off, sizeof(OffType), 1, f);
+
+        if (r1 != 1 || r2 != 1)
+            break;
+        inserir_idx(&raiz, key, off);
+    }
+
+    fclose(f);
+    return raiz;
+}
+
 void split_child(BTreeNode *pai, int idx) {
     BTreeNode *filho = pai->filhos[idx];
     if (!filho) return;
     int max_keys = ORDEM - 1;
-    int mid = max_keys / 2;
+    int mid = max_keys / 2; 
     BTreeNode *novo = criar_BTree(filho->folha);
 
     int rightCount = filho->qnt_keys - mid - 1;
@@ -170,7 +184,7 @@ void inserirNonFull(BTreeNode *no, KeyType key, OffType offset) {
             no->offsets[i + 1] = no->offsets[i];
             i--;
         }
-        if (i >= 0 && no->chaves[i] == key) { /* já existe -> atualizar offset */
+        if (i >= 0 && no->chaves[i] == key) { 
             no->offsets[i] = offset;
             return;
         }
@@ -199,8 +213,6 @@ void inserir_idx(BTreeNode **raiz, KeyType key, OffType offset) {
         return;
     }
     if (buscar_idx(*raiz, key) != -1) {
-        /* já existe: atualizar offset diretamente */
-        /* implementar atualização navegando até a chave (simples função) */
         BTreeNode *cur = *raiz;
         while (1) {
             int i = 0;
@@ -242,7 +254,7 @@ void free_tree(BTreeNode *root) {
     free(root);
 }
 
-/* ----- Hash simples (mantido do seu código) ----- */
+
 unsigned long hash_str(const char *s){
     unsigned long valor = 0;
     int i = 0;
@@ -254,60 +266,38 @@ unsigned long hash_str(const char *s){
     return valor;
 }
 
-/* ----- Persistência: leitura do arquivo .idx (lista de pares) ----- */
-/* Formato .idx: sequência de pares (KeyType key; OffType offset;) */
+
 void carregar_indices() {
-    /* carregar alunos.idx */
-    FILE *f;
-    KeyType key; OffType off;
-    f = fopen(ALUNOS_IDX, "rb");
-    if (f) {
-        while (fread(&key, sizeof(KeyType), 1, f) == 1) {
-            if (fread(&off, sizeof(OffType), 1, f) == 1) {
-                inserir_idx(&idx_alunos, key, off);
-            } else break;
-        }
-        fclose(f);
-    } else {
-        /* se não existir idx, tenta reconstruir de .dat */
-        rebuild_index_alunos();
+    printf("Carregando indices do disco");
+
+    idx_alunos      = carregar_arvore(ALUNOS_IDX);
+    idx_disciplinas = carregar_arvore(DISC_IDX);
+    idx_matriculas  = carregar_arvore(MATR_IDX);
+
+
+    FILE* fmat = fopen(MATR_DAT, "rb");
+    if (!fmat) {
+        proxima_matricula_id = 1;
+        return;
     }
 
-    /* disciplinas.idx */
-    f = fopen(DISC_IDX, "rb");
-    if (f) {
-        while (fread(&key, sizeof(KeyType), 1, f) == 1) {
-            if (fread(&off, sizeof(OffType), 1, f) == 1) {
-                inserir_idx(&idx_disciplinas, key, off);
-            } else break;
+    MatriculaRec reg;
+    int maior_id = 0;
+    while (fread(&reg, sizeof(MatriculaRec), 1, fmat) == 1) {
+        if (reg.id_matricula > maior_id) {
+            maior_id = reg.id_matricula;
         }
-        fclose(f);
-    } else {
-        rebuild_index_disciplinas();
     }
-
-    /* matriculas.idx */
-    f = fopen(MATR_IDX, "rb");
-    if (f) {
-        while (fread(&key, sizeof(KeyType), 1, f) == 1) {
-            if (fread(&off, sizeof(OffType), 1, f) == 1) {
-                inserir_idx(&idx_matriculas, key, off);
-            } else break;
-        }
-        fclose(f);
-    } else {
-        rebuild_index_matriculas();
-    }
+    fclose(fmat);
+    proxima_matricula_id = maior_id + 1;
+    
 }
 
-/* Rebuild index scaneando arquivo .dat (útil após exclusões ou se .idx ausente) */
 void rebuild_index_alunos() {
     FILE *f = fopen(ALUNOS_DAT, "rb");
-    if (!f) { /* nada a fazer */ return; }
-    /* truncate .idx e reescrever */
+    if (!f) return;
     FILE *fi = fopen(ALUNOS_IDX, "wb");
     if (!fi) { fclose(f); return; }
-    /* limpar árvore em memória */
     free_tree(idx_alunos); idx_alunos = NULL;
     AlunoRec r;
     while (fread(&r, sizeof(AlunoRec), 1, f) == 1) {
@@ -315,7 +305,6 @@ void rebuild_index_alunos() {
             long off = (long)(ftell(f) - (long)sizeof(AlunoRec));
             KeyType key = (KeyType)r.matricula;
             OffType offt = (OffType)off;
-            /* gravar no idx file e inserir em memória */
             fwrite(&key, sizeof(KeyType), 1, fi);
             fwrite(&offt, sizeof(OffType), 1, fi);
             inserir_idx(&idx_alunos, key, offt);
@@ -345,26 +334,38 @@ void rebuild_index_disciplinas() {
 }
 
 void rebuild_index_matriculas() {
+    
     FILE *f = fopen(MATR_DAT, "rb");
     if (!f) return;
+
     FILE *fi = fopen(MATR_IDX, "wb");
     if (!fi) { fclose(f); return; }
-    free_tree(idx_matriculas); idx_matriculas = NULL;
+
+    free_tree(idx_matriculas); 
+    idx_matriculas = NULL;
+
     MatriculaRec r;
     while (fread(&r, sizeof(MatriculaRec), 1, f) == 1) {
         if (r.active) {
+            
             long off = (long)(ftell(f) - (long)sizeof(MatriculaRec));
+            
             KeyType key = (KeyType)r.id_matricula;
             OffType offt = (OffType)off;
+
+            
             fwrite(&key, sizeof(KeyType), 1, fi);
             fwrite(&offt, sizeof(OffType), 1, fi);
+
+            
             inserir_idx(&idx_matriculas, key, offt);
         }
     }
-    fclose(f); fclose(fi);
+
+    fclose(f);
+    fclose(fi);
 }
 
-/* Append records (retorna offset do registro escrito) */
 OffType append_aluno(const AlunoRec *r) {
     FILE *f = fopen(ALUNOS_DAT, "ab");
     if (!f) return -1;
@@ -386,13 +387,16 @@ OffType append_disciplina(const DisciplinaRec *r) {
 OffType append_matricula(const MatriculaRec *r) {
     FILE *f = fopen(MATR_DAT, "ab");
     if (!f) return -1;
-    long off = ftell(f);
+
+    fseek(f, 0, SEEK_END);
+    OffType off = ftell(f);
+
     fwrite(r, sizeof(MatriculaRec), 1, f);
     fclose(f);
-    return (OffType)off;
+
+    return off;
 }
 
-/* marca inactive usando offset */
 int mark_aluno_inactive_at_offset(OffType off) {
     FILE *f = fopen(ALUNOS_DAT, "r+b");
     if (!f) return 0;
@@ -432,7 +436,6 @@ int mark_matricula_inactive_at_offset(OffType off) {
     return 1;
 }
 
-/* Atualiza a media de uma matrícula (id) diretamente no arquivo */
 int update_matricula_media_by_id(int id, float new_media) {
     OffType off = buscar_idx(idx_matriculas, (KeyType)id);
     if (off < 0) return 0;
@@ -449,22 +452,95 @@ int update_matricula_media_by_id(int id, float new_media) {
     return 1;
 }
 
-        /////////////////////////////////////////////
-        /////--------*ALUNOS*--------------/////////
-        //////////////////////////////////////////
+/////////////////////////////////////////////
+/////--------*ALUNOS*--------------/////////
+//////////////////////////////////////////
+
+void listar_disciplinas_do_aluno(int matricula) {
+    
+    AlunoRec a;
+    if (!ler_aluno(matricula, &a)) {
+        printf("Aluno %d nao encontrado.\n", matricula);
+        return;
+    }
+    printf("-----------------------------------------------------\n");
+    printf(" Boletim do Aluno: %s (Matr: %d)\n", a.nome, a.matricula);
+    printf("-----------------------------------------------------\n");
+
+    FILE *f = fopen(MATR_DAT, "rb"); 
+    if (!f) {
+        printf("Nenhuma matricula registrada no sistema.\n");
+        return;
+    }
+
+    MatriculaRec m;
+    int encontrou = 0;
+
+    while (fread(&m, sizeof(MatriculaRec), 1, f) == 1) {
+        if (m.active && m.matricula_aluno == matricula) {
+            
+            char nome_disc[128] = "Disciplina Desconhecida";
+            char cod_disc[32]   = "---";
+
+            OffType off_disc = buscar_idx(idx_disciplinas, (KeyType)m.codigo_disciplina);
+            
+            if (off_disc >= 0) {
+                FILE *fd = fopen(DISC_DAT, "rb");
+                if (fd) {
+                    DisciplinaRec d;
+                    fseek(fd, (long)off_disc, SEEK_SET);
+                    if (fread(&d, sizeof(DisciplinaRec), 1, fd) == 1) {
+                        strncpy(nome_disc, d.nome, sizeof(nome_disc));
+                        strncpy(cod_disc, d.codigo, sizeof(cod_disc));
+                    }
+                    fclose(fd);
+                }
+            }
+
+            printf("  [%s] %-20s | Media: %.2f\n", cod_disc, nome_disc, m.media_final);
+            encontrou = 1;
+        }
+    }
+    
+    if (!encontrou) printf("  (Este aluno nao possui matriculas ativas)\n");
+    
+    fclose(f);
+    printf("-----------------------------------------------------\n");
+}
 
 int criar_aluno(int matricula, const char *nome) {
-    if (buscar_idx(idx_alunos, (KeyType)matricula) != -1) return 0; /* já existe */
-    AlunoRec r; r.matricula = matricula; r.active = 1;
-    strncpy(r.nome, nome, sizeof(r.nome)-1); r.nome[sizeof(r.nome)-1] = '\0';
+    if (buscar_idx(idx_alunos, (KeyType)matricula) != -1)
+        return 0;
+
+    AlunoRec r;
+    r.matricula = matricula;
+    r.active = 1;
+    memset(r.nome, 0, sizeof(r.nome));
+    if (nome) {
+        strncpy(r.nome, nome, sizeof(r.nome) - 1);
+        r.nome[sizeof(r.nome) - 1] = '\0';
+    }
+
     OffType off = append_aluno(&r);
-    if (off < 0) return 0;
-    /* append no arquivo de índice (.idx) também */
+    if (off < 0) {
+        fprintf(stderr, "Erro: falha ao gravar alunos.dat: %s\n", strerror(errno));
+        return 0;
+    }
+
     FILE *fi = fopen(ALUNOS_IDX, "ab");
-    if (fi) { KeyType k = (KeyType)matricula; OffType o = off; fwrite(&k, sizeof(KeyType), 1, fi); fwrite(&o, sizeof(OffType), 1, fi); fclose(fi); }
+    if (fi) {
+        KeyType k = (KeyType)matricula;
+        OffType o = off;
+        fwrite(&k, sizeof(KeyType), 1, fi);
+        fwrite(&o, sizeof(OffType), 1, fi);
+        fclose(fi);
+    } 
+
     inserir_idx(&idx_alunos, (KeyType)matricula, off);
+
     return 1;
 }
+
 
 int ler_aluno(int matricula, AlunoRec *out) {
     OffType off = buscar_idx(idx_alunos, (KeyType)matricula);
@@ -497,44 +573,95 @@ int atualizar_aluno(int matricula, const char *novo_nome) {
 int deletar_aluno(int matricula) {
     OffType off = buscar_idx(idx_alunos, (KeyType)matricula);
     if (off < 0) return 0;
-    /* marcar aluno inactive */
+
     if (!mark_aluno_inactive_at_offset(off)) return 0;
-    /* cascade: scan matriculas.dat e marcar as inactive onde matricula_aluno == matricula */
-    FILE *f = fopen(MATR_DAT, "r+b");
+
+    FILE *f = fopen(MATR_DAT, "r+b"); 
     if (f) {
         MatriculaRec r;
         long pos;
         while (fread(&r, sizeof(MatriculaRec), 1, f) == 1) {
             pos = ftell(f) - (long)sizeof(MatriculaRec);
+
             if (r.active && r.matricula_aluno == matricula) {
                 r.active = 0;
-                if (fseek(f, pos, SEEK_SET) == 0) fwrite(&r, sizeof(MatriculaRec), 1, f);
+                
+                if (fseek(f, pos, SEEK_SET) == 0) {
+                    fwrite(&r, sizeof(MatriculaRec), 1, f);
+                    
+                    fseek(f, 0, SEEK_CUR); 
+                }
             }
         }
         fclose(f);
     }
-    /* rebuild índices afetados: alunos.idx e matriculas.idx */
+
     rebuild_index_alunos();
     rebuild_index_matriculas();
+    
     return 1;
 }
 
 //////////////////////////////////////////////////////
 
+/////////////////////////////////////////////
+/////--------*DISCIPLINAS*--------------/////////
+//////////////////////////////////////////
 
-        /////////////////////////////////////////////
-        /////--------*DISCIPLINAS*--------------/////////
-        //////////////////////////////////////////
+void listar_alunos_da_disciplina(const char *codigo_disciplina) {
+    DisciplinaRec d;
+    if (!ler_disciplina(codigo_disciplina, &d)) {
+        printf("Disciplina '%s' nao encontrada no indice.\n", codigo_disciplina);
+        return;
+    }
+    printf("---Disciplina: %s (%s) ---\n", d.nome, d.codigo);
+
+    int hash_alvo = (int)hash_str(codigo_disciplina);
+    
+    FILE *f = fopen(MATR_DAT, "rb"); 
+    if (!f) {
+        printf("Arquivo de matriculas (%s) nao encontrado.\n", MATR_DAT);
+        return;
+    }
+
+    MatriculaRec m;
+    int total = 0;
+    int registros_lidos = 0;
+
+    while (fread(&m, sizeof(MatriculaRec), 1, f) == 1) {
+        registros_lidos++;
+
+        if (m.active && m.codigo_disciplina == hash_alvo) {
+            
+            AlunoRec aluno;
+            if (ler_aluno(m.matricula_aluno, &aluno)) {
+                 printf("  -> Matricula: %d | Nome: %s | Media: %.2f\n", 
+                        aluno.matricula, aluno.nome, m.media_final);
+            } else {
+                 printf("  -> Matricula: %d (Nome indisponivel no cadastro)\n", m.matricula_aluno);
+            }
+            total++;
+        }
+    }
+    
+    if (total == 0) {
+        printf("  (Nenhum aluno matriculado nesta disciplina)\n");
+        printf("   Foram lidos %d registros no arquivo de matriculas]\n", registros_lidos);
+    } else {
+        printf("Total de alunos: %d\n", total);
+    }
+    
+    fclose(f);
+}
 
 int criar_disciplina(const char *codigo, const char *nome) {
     uint64_t h = hash_str(codigo);
-    if (buscar_idx(idx_disciplinas, (KeyType)h) != -1) {
-        /* existe — verificar string exata */
-        OffType off = buscar_idx(idx_disciplinas, (KeyType)h);
-        if (off >= 0) {
+    OffType existente = buscar_idx(idx_disciplinas, (KeyType)h);
+    if (existente != -1) {
+        if (existente >= 0) {
             FILE *f = fopen(DISC_DAT, "rb");
             if (f) {
-                if (fseek(f, (long)off, SEEK_SET) == 0) {
+                if (fseek(f, (long)existente, SEEK_SET) == 0) {
                     DisciplinaRec r;
                     if (fread(&r, sizeof(DisciplinaRec), 1, f) == 1) {
                         if (r.active && strcmp(r.codigo, codigo) == 0) { fclose(f); return 0; }
@@ -543,8 +670,6 @@ int criar_disciplina(const char *codigo, const char *nome) {
                 fclose(f);
             }
         }
-        /* se hash colidiu com outra codigo diferente, permitimos criar (mas o índice terá entradas diferentes).
-           Para simplicidade não tratamos colisões com encadeamento secundário. */
     }
     DisciplinaRec r; r.active = 1;
     strncpy(r.codigo, codigo, sizeof(r.codigo)-1); r.codigo[sizeof(r.codigo)-1] = '\0';
@@ -593,70 +718,148 @@ int deletar_disciplina(const char *codigo) {
     uint64_t h = hash_str(codigo);
     OffType off = buscar_idx(idx_disciplinas, (KeyType)h);
     if (off < 0) return 0;
-    /* marcar disciplina inactive */
+
     if (!mark_disciplina_inactive_at_offset(off)) return 0;
-    /* cascade: marcar matrículas associadas */
-    FILE *f = fopen(MATR_DAT, "r+b");
+
+    FILE *f = fopen("matriculas.dat", "r+b"); 
     if (f) {
         MatriculaRec r;
         long pos;
+        
         while (fread(&r, sizeof(MatriculaRec), 1, f) == 1) {
+            
             pos = ftell(f) - (long)sizeof(MatriculaRec);
-            if (r.active && r.codigo_hash == h) {
+
+            if (r.active && r.codigo_disciplina == (int)h) {
                 r.active = 0;
-                if (fseek(f, pos, SEEK_SET) == 0) fwrite(&r, sizeof(MatriculaRec), 1, f);
+
+                if (fseek(f, pos, SEEK_SET) == 0) {
+                   
+                    fwrite(&r, sizeof(MatriculaRec), 1, f);
+
+                    fseek(f, 0, SEEK_CUR); 
+                }
             }
         }
         fclose(f);
     }
+
     rebuild_index_disciplinas();
     rebuild_index_matriculas();
+    
     return 1;
 }
+/////////////////////////////////////////////
+/////--------*MATRICULAS*--------------/////////
+//////////////////////////////////////////
 
-       /////////////////////////////////////////////
-        /////--------*MATRICULAS*--------------/////////
-        //////////////////////////////////////////
+int existe_matricula(int mat_aluno, const char *cod_disciplina) {
+    unsigned long hash_disc = hash_str(cod_disciplina);
+    
+    FILE *f = fopen(MATR_DAT, "rb"); 
+    if (!f) return 0; 
 
-void lerArqMatriculas(FILE* arquivo){
-    char linha[100];
+    MatriculaRec r;
+    int existe = 0;
+    
+    while (fread(&r, sizeof(MatriculaRec), 1, f) == 1) {
+        if (r.active && r.matricula_aluno == mat_aluno && r.codigo_disciplina == (int)hash_disc) {
+            existe = 1;
+            break;
+        }
+    }
+    fclose(f);
+    return existe;
+}
 
-    while(fgets(linha,sizeof(linha),arquivo) != NULL){
-        char cod;
-        int matricula;
+void lerArqMatriculas(FILE* arquivo) {
+    if (!arquivo) return;
+
+    char linha[512];
+    int count = 0;
+    int duplicadas = 0;
+
+    long pos_inicial = ftell(arquivo);
+    if (fgets(linha, sizeof(linha), arquivo) != NULL) {
+        if (linha[0] >= '0' && linha[0] <= '9') {
+            fseek(arquivo, pos_inicial, SEEK_SET);
+        }
+    }
+
+    while (fgets(linha, sizeof(linha), arquivo) != NULL) {
+        char *token;
+        int matricula_aluno = 0;
+        char cod_disciplina[64] = {0};
+        float media = -1.0f;
+
+        linha[strcspn(linha, "\n")] = 0;
+
+        // 1. ID
+        token = strtok(linha, ",");
+        if (!token) continue;
+
+        token = strtok(NULL, ",");
+        if (!token) continue;
+        matricula_aluno = atoi(token);
+
+        token = strtok(NULL, ",");
+        if (!token) continue;
+        strncpy(cod_disciplina, token, sizeof(cod_disciplina)-1);
+
+        // 4. Ano 
+        strtok(NULL, ",");
+        // 5. Semestre 
+        strtok(NULL, ",");
+
+        token = strtok(NULL, ",");
+        if (token && strlen(token) > 0) {
+            media = (float)atof(token);
+        }
+
+        if (existe_matricula(matricula_aluno, cod_disciplina)) {
+            duplicadas++;
+            continue; 
+        }
+
+        if (criar_matricula(matricula_aluno, cod_disciplina, media)) {
+            count++;
+        }
     }
 }
 
-int criar_matricula(int matricula_aluno, const char *codigo, float media_final) {
-    /* verificar existência das chaves estrangeiras */
+int criar_matricula(int matricula_aluno, const char *cod_disciplina, float media_final)
+{
     if (buscar_idx(idx_alunos, (KeyType)matricula_aluno) == -1) return 0;
-    uint64_t h = hash_str(codigo);
-    OffType offd = buscar_idx(idx_disciplinas, (KeyType)h);
-    if (offd == -1) return 0;
-    /* obter novo id_matricula = max_id + 1 (scan de arquivo) */
-    int next_id = 1;
-    FILE *f = fopen(MATR_DAT, "rb");
-    if (f) {
-        MatriculaRec tmp;
-        while (fread(&tmp, sizeof(MatriculaRec), 1, f) == 1) {
-            if (tmp.id_matricula >= next_id) next_id = tmp.id_matricula + 1;
-        }
-        fclose(f);
-    }
+
+    unsigned long cod_hash = hash_str(cod_disciplina);
+    if (buscar_idx(idx_disciplinas, (KeyType)cod_hash) == -1) return 0;
+
+    int id_matricula = proxima_matricula_id++; 
+
     MatriculaRec r;
-    r.id_matricula = next_id;
+    r.id_matricula = id_matricula;
     r.matricula_aluno = matricula_aluno;
-    r.codigo_hash = h;
+    r.codigo_disciplina = (int)cod_hash;
     r.media_final = media_final;
     r.active = 1;
+
     OffType off = append_matricula(&r);
     if (off < 0) return 0;
-    FILE *fi = fopen(MATR_IDX, "ab");
-    if (fi) { KeyType k = (KeyType)r.id_matricula; OffType o = off; fwrite(&k, sizeof(KeyType), 1, fi); fwrite(&o, sizeof(OffType), 1, fi); fclose(fi); }
-    inserir_idx(&idx_matriculas, (KeyType)r.id_matricula, off);
+
+    FILE *fi = fopen(MATR_IDX, "ab"); 
+    if (fi) {
+        KeyType k = (KeyType)id_matricula;
+        fwrite(&k, sizeof(KeyType), 1, fi);
+        fwrite(&off, sizeof(OffType), 1, fi);
+        fclose(fi);
+    } else {
+        printf("Erro: Nao foi possivel gravar\n");
+    }
+
+    inserir_idx(&idx_matriculas, (KeyType)id_matricula, off);
+
     return 1;
 }
-
 int ler_matricula(int id_matricula, MatriculaRec *out) {
     OffType off = buscar_idx(idx_matriculas, (KeyType)id_matricula);
     if (off < 0) return 0;
@@ -681,19 +884,15 @@ int atualizar_media_matricula(int id_matricula, float nova_media) {
     return update_matricula_media_by_id(id_matricula, nova_media);
 }
 
-/* ----- MENU ----- */
 void menu() {
-    carregar_indices();
-    printf("SGA inicializado.\n");
 
     int opc = 0;
 
     while (1) {
         printf("\n--- Menu ---\n");
-        printf("1) Criar Aluno\n2) Ler Aluno\n3) Atualizar Aluno\n4) Deletar Aluno (cascade)\n");
-        printf("5) Criar Disciplina\n6) Ler Disciplina\n7) Atualizar Disciplina\n8) Deletar Disciplina (cascade)\n");
-        printf("9) Criar Matricula\n10) Ler Matricula\n11) Atualizar media Matricula\n12) Deletar Matricula\n");
-        printf("13) Mostrar índices (debug)\n0) Sair\n> ");
+        printf("1) Criar Aluno\n2) Ler Aluno\n3) Atualizar Aluno\n4) Deletar Aluno\n");
+        printf("5) Criar Disciplina\n6) Ler Disciplina\n7) Atualizar Disciplina\n8) Deletar Disciplina\n");
+        printf("0) Sair\n> ");
 
         if (scanf("%d", &opc) != 1) {
             while (getchar() != '\n');
@@ -716,12 +915,11 @@ void menu() {
             nome[strcspn(nome, "\n")] = '\0';
 
             if (criar_aluno(m, nome))
-                printf("Aluno criado\n");
+                printf("Aluno criado.\n");
             else
-                printf("Falha - já existe?\n");
+                printf("Falha: aluno já existe.\n");
 
         } else if (opc == 2) {
-
             int m;
             AlunoRec a;
 
@@ -729,44 +927,66 @@ void menu() {
             scanf("%d", &m);
 
             if (ler_aluno(m, &a))
-                printf("Matricula:%d Nome:%s\n", a.matricula, a.nome);
+                listar_disciplinas_do_aluno(m);
             else
-                printf("Aluno nao encontrado\n");
+                printf("Aluno não encontrado.\n");
 
         } else if (opc == 3) {
-
             int m;
-            char nome[128];
-
-            printf("Matricula: ");
+            printf("Digite a Matricula do Aluno: ");
             scanf("%d", &m);
-            getchar();
 
-            printf("Novo nome: ");
-            fgets(nome, sizeof(nome), stdin);
-            nome[strcspn(nome, "\n")] = '\0';
+            listar_disciplinas_do_aluno(m); 
 
-            if (atualizar_aluno(m, nome))
-                printf("Atualizado\n");
-            else
-                printf("Falha\n");
+            char cod_digitado[32];
+            printf("\nDigite o CODIGO da disciplina para alterar: ");
+            scanf("%31s", cod_digitado);
+            
+            float nova_media;
+            printf("Digite a nova media final: ");
+            scanf("%f", &nova_media);
+            
+            int id_encontrado = -1;
+            int hash_buscado = (int)hash_str(cod_digitado); 
 
+            FILE *f = fopen(MATR_DAT, "rb"); 
+            if (f) {
+                MatriculaRec temp;
+                while (fread(&temp, sizeof(MatriculaRec), 1, f) == 1) {
+                    if (temp.active && 
+                        temp.matricula_aluno == m && 
+                        temp.codigo_disciplina == hash_buscado) {
+                        
+                        id_encontrado = temp.id_matricula;
+                        break; 
+                    }
+                }
+                fclose(f);
+            }
+
+            if (id_encontrado != -1) {
+                if (atualizar_media_matricula(id_encontrado, nova_media)) {
+                    printf(">> Sucesso: Nota da disciplina '%s' atualizada para %.2f.\n", cod_digitado, nova_media);
+                } else {
+                    printf(">> Erro ao gravar atualização.\n");
+                }
+            } 
+            else return;
         } else if (opc == 4) {
-
             int m;
+
             printf("Matricula: ");
             scanf("%d", &m);
 
             if (deletar_aluno(m))
-                printf("Aluno deletado (cascade)\n");
+                printf("Aluno deletado.\n");
             else
-                printf("Falha\n");
+                printf("Falha.\n");
 
         } else if (opc == 5) {
-
             char cod[32], nome[128];
 
-            printf("Codigo (ex INF001): ");
+            printf("Codigo: ");
             scanf("%31s", cod);
             getchar();
 
@@ -775,27 +995,24 @@ void menu() {
             nome[strcspn(nome, "\n")] = '\0';
 
             if (criar_disciplina(cod, nome))
-                printf("Disciplina criada\n");
+                printf("Disciplina criada.\n");
             else
-                printf("Falha - talvez ja exista\n");
+                printf("Falha: ja existe.\n");
 
         } else if (opc == 6) {
-
             char cod[32];
             DisciplinaRec d;
 
             printf("Codigo: ");
             scanf("%31s", cod);
 
-            if (ler_disciplina(cod, &d))
-                printf("Codigo:%s Nome:%s\n", d.codigo, d.nome);
-            else
-                printf("Disciplina nao encontrado\n");
+            if (ler_disciplina(cod, &d)){
+                listar_alunos_da_disciplina(cod);}
+            else{
+                printf("Disciplina não encontrada.\n");}
 
         } else if (opc == 7) {
-
-            char cod[32];
-            char nome[128];
+            char cod[32], nome[128];
 
             printf("Codigo: ");
             scanf("%31s", cod);
@@ -806,188 +1023,93 @@ void menu() {
             nome[strcspn(nome, "\n")] = '\0';
 
             if (atualizar_disciplina(cod, nome))
-                printf("Atualizado\n");
+                printf("Atualizada.\n");
             else
-                printf("Falha\n");
+                printf("Falha.\n");
 
         } else if (opc == 8) {
-
             char cod[32];
 
             printf("Codigo: ");
             scanf("%31s", cod);
 
             if (deletar_disciplina(cod))
-                printf("Disciplina deletada (cascade)\n");
+                printf("Disciplina deletada.\n");
             else
-                printf("Falha\n");
+                printf("Falha.\n");
 
-        } else if (opc == 9) {
-
-            int mat;
-            char cod[32];
-            float media;
-
-            printf("Matricula aluno: ");
-            scanf("%d", &mat);
-
-            printf("Codigo disciplina: ");
-            scanf("%31s", cod);
-
-            printf("Media final (ex: 7.5): ");
-            scanf("%f", &media);
-
-            if (criar_matricula(mat, cod, media))
-                printf("Matricula criada\n");
-            else
-                printf("Falha - checar FK\n");
-
-        } else if (opc == 10) {
-
-            int id;
-            MatriculaRec mm;
-
-            printf("ID matricula: ");
-            scanf("%d", &id);
-
-            if (ler_matricula(id, &mm))
-                printf("ID:%d Aluno:%d CodHash:%" PRIu64 " Media:%.2f\n",
-                       mm.id_matricula, mm.matricula_aluno,
-                       mm.codigo_hash, mm.media_final);
-            else
-                printf("Nao encontrada\n");
-
-        } else if (opc == 11) {
-
-            int id;
-            float m;
-
-            printf("ID matricula: ");
-            scanf("%d", &id);
-
-            printf("Nova media: ");
-            scanf("%f", &m);
-
-            if (atualizar_media_matricula(id, m))
-                printf("Atualizado\n");
-            else
-                printf("Falha\n");
-
-        } else if (opc == 12) {
-
-            int id;
-
-            printf("ID matricula: ");
-            scanf("%d", &id);
-
-            if (deletar_matricula(id))
-                printf("Deletada\n");
-            else
-                printf("Falha\n");
-
-        } else if (opc == 13) {
-
-            printf("\n--- idx_alunos traversal ---\n");
-            traverse(idx_alunos);
-            printf("\n");
-
-            printf("--- idx_disciplinas traversal ---\n");
-            traverse(idx_disciplinas);
-            printf("\n");
-
-            printf("--- idx_matriculas traversal ---\n");
-            traverse(idx_matriculas);
-            printf("\n");
-
-        } else {
-            printf("Opcao invalida\n");
+        } 
+        else {
+            printf("Opcao invalida.\n");
         }
     }
 }
 
+
 void lerArqAlunos(FILE* arquivo){
-    char *linha[100];
-    
+    if (!arquivo) return;
+
+    char linha[512];
+
     while (fgets(linha, sizeof(linha), arquivo) != NULL) {
-        char nome[50];
-        int numero;
-        char *token;
-        
-        token = strtok(linha, ",");
-        if (token != NULL) {
-            strncpy(nome, token, 50);
-            nome[50 - 1] = '\0';  
-        }
-        
-        
-        token = strtok(NULL, ",");
-        if (token != NULL) {
-            sscanf(token, "%d", &numero);
-        }
-        
-        criar_aluno(numero,nome);
-        printf("Nome: %s, Número: %d\n", nome, numero);
-        
-        
+
+        int matricula = 0;
+        char nome[128] = {0};
+
+        char *token = strtok(linha, ",\n");
+        if (!token) continue;
+        matricula = atoi(token);
+
+        token = strtok(NULL, ",\n");
+        if (!token) continue;
+        strncpy(nome, token, sizeof(nome)-1);
+
+        criar_aluno(matricula, nome);
     }
 }
 
 void lerArqDisciplinas(FILE* arquivo){
-    char *linha[100];
-
-    while (fgets(linha,sizeof(linha),arquivo) != NULL){
-        char cod[5];
-        char nome;
+    if (!arquivo) return;
+    char linha[512];
+    while (fgets(linha, sizeof(linha), arquivo) != NULL){
+        char cod[32] = {0};
+        char nome[128] = {0};
         char *token;
-
-        token = strtok(linha,",");
+        token = strtok(linha,",\n");
         if (token != NULL){
-            strncpy(cod,token,6);
+            strncpy(cod, token, sizeof(cod)-1);
         }
-
-        token = strtok(NULL, ",");
+        token = strtok(NULL, ",\n");
         if (token != NULL) {
-            strncpy(nome,token,50);
+            strncpy(nome, token, sizeof(nome)-1);
         }
-
-        criar_disciplina(cod,nome);
+        if (!criar_disciplina(cod,nome)) {
+            
+        }
     }
 }
 
 int main(void) {
-   
+carregar_indices();
     
-    
-    BTreeNode *BTreeAluno = criar_BTree(SIM);
-    BTreeNode *BTreeDisciplinas = criar_BTree(SIM);
-    BTreeNode *BTreeMatriculas = criar_BTree(SIM);
-////////////////////////////////////    
-    FILE* alunos;
+    if (idx_alunos == NULL) {
+        printf("Primeira execucao detectada. Importando CSVs...\n");
 
-    alunos = fopen("alunos.cvs","r");
-    lerArqAlunos(alunos);
+        FILE* alunos = fopen("alunos.csv","r");
+        if (alunos) { lerArqAlunos(alunos); fclose(alunos); }
 
-    fclose(alunos);
-//////////////////////////////////////
-    FILE* cadeiras;
+        FILE* cadeiras = fopen("disciplinas.csv","r");
+        if (cadeiras) { lerArqDisciplinas(cadeiras); fclose(cadeiras); }
 
-    cadeiras = fopen("disciplinas.cvs","r");
-    lerArqDisciplinas(cadeiras);
-
-    fclose(cadeiras);
-///////////////////////////////////
-    FILE* matriculas;
-
-    matriculas = fopen("matriculas.cvs","r");
-    lerArqMatriculas(matriculas);
-
-    fclose(matriculas);
-//////////////////////////////////
-
-    carregar_indices();
+        FILE* matriculas = fopen("matricula_aluno.csv","r");
+        if (matriculas) { lerArqMatriculas(matriculas); fclose(matriculas); }
+        
+        rebuild_index_alunos();
+        rebuild_index_disciplinas();
+        rebuild_index_matriculas();
+    } 
     menu();
-
-    /* liberar mem */
+    
     free_tree(idx_alunos);
     free_tree(idx_disciplinas);
     free_tree(idx_matriculas);
