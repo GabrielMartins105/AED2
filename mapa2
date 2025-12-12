@@ -1,0 +1,401 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+typedef struct cidade {
+    int id;     
+    float x;
+    float y;
+} cidade;
+
+typedef struct mapa {
+    int V;        
+    int A;         
+    float **adj;    
+    cidade *cidades;
+} *Mapa;
+
+Mapa iniciarMapa(int cidades);
+static float **criarMatriz(int r, int c, float val);
+void liberarMapa(Mapa m);
+
+int carregarTSP(const char *fname, Mapa m); 
+
+void preencherGrafoCompleto(Mapa m); 
+
+void acharPercurso(Mapa m);
+int VizinhoProximo(Mapa m, int ini, int *fim);
+
+float dist(Mapa m, int a, int b);
+float totalDist(Mapa m, int *fim);
+
+int inserirVertice(Mapa *pm, cidade novo);              
+int removerVertice(Mapa *pm, int v);                    
+int existeAresta(Mapa m, int a, int b);                 
+int editarAresta(Mapa m, int a, int b, float novoPeso); 
+
+void imprimirResumo(Mapa m);
+
+int main(void) {
+
+    FILE *f = fopen("cidades", "r");
+    if (!f) {
+        perror("Erro ao abrir arquivo .tsp");
+        return 1;
+    }
+
+    char linha[512];
+    int dimension = 0;
+    while (fgets(linha, sizeof linha, f)) {
+        if (strncmp(linha, "DIMENSION", 9) == 0) {
+            char *p = strchr(linha, ':');
+            if (p) {
+                dimension = atoi(p+1);
+            } else {
+                char key[64]; int val;
+                if (sscanf(linha, "%s %d", key, &val) == 2) dimension = val;
+            }
+            break;
+        }
+    }
+    fclose(f);
+
+    if (dimension <= 0) {
+        fprintf(stderr, "Não foi possível detectar DIMENSION no arquivo .tsp\n");
+        return 1;
+    }
+
+    Mapa map = iniciarMapa(dimension);
+    if (!map) { fprintf(stderr,"Erro ao criar mapa\n"); return 1; }
+
+    if (carregarTSP("cidades", map) != 0) {
+        fprintf(stderr, "Erro ao carregar arquivo TSP\n");
+        liberarMapa(map);
+        return 1;
+    }
+
+    preencherGrafoCompleto(map);
+
+    imprimirResumo(map);
+
+    printf("\n--- Testes rápidos ---\n");
+    printf("Existe aresta 0-1? %s\n", existeAresta(map, 0, 1) ? "SIM" : "NAO");
+
+    printf("Editar aresta 0-1 para 12345.5\n");
+    editarAresta(map, 0, 1, 12345.5f);
+    printf("dist[0][1]=%.3f\n", dist(map,0,1));
+
+    printf("Restaurando aresta 0-1 (recalculando pelo EUC)\n");
+    float dx = map->cidades[0].x - map->cidades[1].x;
+    float dy = map->cidades[0].y - map->cidades[1].y;
+    float d01 = sqrtf(dx*dx + dy*dy);
+    editarAresta(map,0,1,d01);
+    printf("dist[0][1]=%.3f\n", dist(map,0,1));
+
+    cidade nova;
+    nova.id = map->V; nova.x = 40000.0f; nova.y = 40000.0f;
+    printf("Inserindo nova cidade (id %d) ...\n", nova.id);
+    inserirVertice(&map, nova);
+    printf("V agora = %d\n", map->V);
+    imprimirResumo(map);
+
+    printf("Removendo vértice %d ...\n", map->V - 1);
+    removerVertice(&map, map->V - 1);
+    printf("V agora = %d\n", map->V);
+    imprimirResumo(map);
+
+    acharPercurso(map);
+
+    liberarMapa(map);
+    return 0;
+}
+
+Mapa iniciarMapa(int cidades) {
+    if (cidades < 0) return NULL;
+    Mapa m = malloc(sizeof *m);
+    if (!m) return NULL;
+    m->V = cidades;
+    m->A = 0;
+    m->adj = criarMatriz(cidades, cidades, 0.0f);
+    m->cidades = malloc(sizeof(cidade) * cidades);
+    if (!m->cidades) { free(m->adj); free(m); return NULL; }
+    for (int i = 0; i < cidades; ++i) { m->cidades[i].id = -1; m->cidades[i].x = 0; m->cidades[i].y = 0; }
+    return m;
+}
+
+static float **criarMatriz(int r, int c, float val) {
+    float **m = malloc(sizeof(float*) * r);
+    if (!m) return NULL;
+    for (int i = 0; i < r; ++i) {
+        m[i] = malloc(sizeof(float) * c);
+        if (!m[i]) {
+            for (int j = 0; j < i; ++j) free(m[j]);
+            free(m);
+            return NULL;
+        }
+    }
+    for (int i = 0; i < r; ++i)
+        for (int j = 0; j < c; ++j)
+            m[i][j] = val;
+    return m;
+}
+
+void liberarMapa(Mapa m) {
+    if (!m) return;
+    if (m->adj) {
+        for (int i = 0; i < m->V; ++i) free(m->adj[i]);
+        free(m->adj);
+    }
+    if (m->cidades) free(m->cidades);
+    free(m);
+}
+
+int carregarTSP(const char *fname, Mapa m) {
+    if (!fname || !m) return -1;
+    FILE *f = fopen(fname, "r");
+    if (!f) { perror("fopen"); return -1; }
+
+    char linha[512];
+    int in_section = 0;
+    int cont = 0;
+    while (fgets(linha, sizeof linha, f)) {
+        if (!in_section) {
+            if (strstr(linha, "NODE_COORD_SECTION")) {
+                in_section = 1;
+                continue;
+            }
+        } else {
+            if (strstr(linha, "EOF")) break;
+            int id;
+            double xd, yd;
+            int n = sscanf(linha, "%d %lf %lf", &id, &xd, &yd);
+            if (n == 3) {
+                if (cont >= m->V) {
+                    fprintf(stderr, "Aviso: mais pontos no arquivo do que DIMENSION. Ignorando extras.\n");
+                    continue;
+                }
+                m->cidades[cont].id = id - 1; 
+                m->cidades[cont].x = (float) xd;
+                m->cidades[cont].y = (float) yd;
+                cont++;
+            } 
+        }
+    }
+    fclose(f);
+
+    if (cont != m->V) {
+        fprintf(stderr, "Aviso: número de cidades lidas (%d) != DIMENSION (%d). Ajustando V para %d.\n",
+                cont, m->V, cont);
+        if (cont == 0) {
+            fprintf(stderr, "Nenhuma cidade lida. Abortando.\n");
+            return -1;
+        }
+        float **nova = criarMatriz(cont, cont, 0.0f);
+        for (int i = 0; i < m->V; ++i) free(m->adj[i]);
+        free(m->adj);
+        m->adj = nova;
+        cidade *nc = realloc(m->cidades, sizeof(cidade) * cont);
+        if (!nc) { perror("realloc"); return -1; }
+        m->cidades = nc;
+        m->V = cont;
+    }
+    return 0;
+}
+
+void preencherGrafoCompleto(Mapa m) {
+    if (!m) return;
+    for (int i = 0; i < m->V; ++i) {
+        for (int j = 0; j < m->V; ++j) {
+            m->adj[i][j] = 0.0f;
+        }
+    }
+    int contA = 0;
+    for (int i = 0; i < m->V; ++i) {
+        for (int j = i+1; j < m->V; ++j) {
+            float dx = m->cidades[i].x - m->cidades[j].x;
+            float dy = m->cidades[i].y - m->cidades[j].y;
+            float d = sqrtf(dx*dx + dy*dy);
+            m->adj[i][j] = d;
+            m->adj[j][i] = d;
+            contA++;
+        }
+    }
+    m->A = contA;
+}
+
+void imprimirResumo(Mapa m) {
+    if (!m) return;
+    printf("Mapa: V=%d, A=%d\n", m->V, m->A);
+    if (m->V > 0) {
+        printf("Cidade 0: id(orig)=%d, x=%.3f y=%.3f\n",
+               m->cidades[0].id, m->cidades[0].x, m->cidades[0].y);
+    }
+}
+
+void acharPercurso(Mapa m) {
+    if (!m) return;
+    int *caminho = malloc(sizeof(int) * m->V);
+    if (!caminho) return;
+    if (VizinhoProximo(m, 0, caminho) == 0) {
+        printf("\nPercurso (vizinho mais próximo):\n");
+        for (int i = 0; i < m->V; ++i) printf("%d ", caminho[i]);
+        printf("\nDistância total: %.3f\n", totalDist(m, caminho));
+    } else {
+        printf("Erro ao gerar percurso (grafo possivelmente desconexo).\n");
+    }
+    free(caminho);
+}
+
+int VizinhoProximo(Mapa m, int ini, int *fim) {
+    if (!m || !fim) return -1;
+    int *visitado = malloc(sizeof(int) * m->V);
+    if (!visitado) return -1;
+    for (int i = 0; i < m->V; ++i) visitado[i] = 0;
+    visitado[ini] = 1;
+    fim[0] = ini;
+    int atual = ini;
+    for (int k = 1; k < m->V; ++k) {
+        float melhor = 1e30f;
+        int prox = -1;
+        for (int j = 0; j < m->V; ++j) {
+            if (!visitado[j] && atual != j && m->adj[atual][j] > 0.0f && m->adj[atual][j] < melhor) {
+                melhor = m->adj[atual][j];
+                prox = j;
+            }
+        }
+        if (prox == -1) { free(visitado); return -1; }
+        fim[k] = prox;
+        visitado[prox] = 1;
+        atual = prox;
+    }
+    free(visitado);
+    return 0;
+}
+
+float dist(Mapa m, int a, int b) {
+    if (!m) return 0.0f;
+    if (a < 0 || b < 0 || a >= m->V || b >= m->V) return 0.0f;
+    return m->adj[a][b];
+}
+
+float totalDist(Mapa m, int *fim) {
+    if (!m || !fim) return 0.0f;
+    float s = 0.0f;
+    for (int i = 0; i < m->V - 1; ++i) {
+        s += m->adj[fim[i]][fim[i+1]];
+    }
+    s += m->adj[fim[m->V - 1]][fim[0]];
+    return s;
+}
+
+int inserirVertice(Mapa *pm, cidade novo) {
+    if (!pm || !*pm) return -1;
+    Mapa m = *pm;
+    int newV = m->V + 1;
+
+    cidade *nc = realloc(m->cidades, sizeof(cidade) * newV);
+    if (!nc) return -1;
+    m->cidades = nc;
+    m->cidades[newV-1] = novo;
+
+    float **nova = criarMatriz(newV, newV, 0.0f);
+    if (!nova) return -1;
+
+    for (int i = 0; i < m->V; ++i)
+        for (int j = 0; j < m->V; ++j)
+            nova[i][j] = m->adj[i][j];
+
+    int contA = 0;
+    for (int i = 0; i < newV; ++i) {
+        for (int j = i+1; j < newV; ++j) {
+            if (i == newV-1) {
+                float dx = m->cidades[i].x - m->cidades[j].x;
+                float dy = m->cidades[i].y - m->cidades[j].y;
+                float d = sqrtf(dx*dx + dy*dy);
+                nova[i][j] = d;
+                nova[j][i] = d;
+            } 
+            if (nova[i][j] > 0.0f) contA++;
+        }
+    }
+    for (int i = 0; i < m->V; ++i) free(m->adj[i]);
+    free(m->adj);
+
+    m->adj = nova;
+    m->V = newV;
+    m->A = contA;
+    return 0;
+}
+
+int removerVertice(Mapa *pm, int v) {
+    if (!pm || !*pm) return -1;
+    Mapa m = *pm;
+    if (v < 0 || v >= m->V) return -1;
+    int newV = m->V - 1;
+    if (newV == 0) {
+        for (int i = 0; i < m->V; ++i) free(m->adj[i]);
+        free(m->adj);
+        free(m->cidades);
+        m->adj = NULL;
+        m->cidades = NULL;
+        m->V = 0;
+        m->A = 0;
+        return 0;
+    }
+
+    float **nova = criarMatriz(newV, newV, 0.0f);
+    if (!nova) return -1;
+    for (int i = 0, ii = 0; i < m->V; ++i) {
+        if (i == v) continue;
+        for (int j = 0, jj = 0; j < m->V; ++j) {
+            if (j == v) continue;
+            nova[ii][jj] = m->adj[i][j];
+            jj++;
+        }
+        ii++;
+    }
+
+    cidade *nc = malloc(sizeof(cidade) * newV);
+    if (!nc) { 
+        for (int i = 0; i < newV; ++i) free(nova[i]);
+        free(nova);
+        return -1;
+    }
+    for (int i = 0, ii = 0; i < m->V; ++i) {
+        if (i == v) continue;
+        nc[ii++] = m->cidades[i];
+    }
+
+    int contA = 0;
+    for (int i = 0; i < newV; ++i)
+        for (int j = i+1; j < newV; ++j)
+            if (nova[i][j] > 0.0f) contA++;
+    for (int i = 0; i < m->V; ++i) free(m->adj[i]);
+    free(m->adj);
+    free(m->cidades);
+
+    m->adj = nova;
+    m->cidades = nc;
+    m->V = newV;
+    m->A = contA;
+    return 0;
+}
+
+int existeAresta(Mapa m, int a, int b) {
+    if (!m) return 0;
+    if (a < 0 || b < 0 || a >= m->V || b >= m->V) return 0;
+    return (m->adj[a][b] > 0.0f) ? 1 : 0;
+}
+
+int editarAresta(Mapa m, int a, int b, float novoPeso) {
+    if (!m) return -1;
+    if (a < 0 || b < 0 || a >= m->V || b >= m->V) return -1;
+    float old = m->adj[a][b];
+    if (old == 0.0f && novoPeso > 0.0f) m->A++;
+    if (old > 0.0f && novoPeso == 0.0f) m->A--;
+    m->adj[a][b] = novoPeso;
+    m->adj[b][a] = novoPeso;
+    return 0;
+}
