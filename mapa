@@ -8,7 +8,7 @@
 struct mapa{
     int V;
     int A;
-    int **adj;
+    float **adj;
 };
 
 typedef struct cidade{
@@ -20,9 +20,13 @@ typedef struct cidade{
 typedef struct mapa *Mapa;
 
 Mapa iniciarMapa( int cidades);
-static int **AddMatrix( int r, int c, int val);
+static float **AddMatrix( int r, int c, int val);
 void AddDistancia(Mapa m, cidade o, cidade c);
 void acharPercurso(Mapa m);
+int VizinhoProximo(Mapa m , int ini, int *fim);
+
+float totalDist(Mapa m, int *fim);
+float dist(Mapa m, int a, int b);
 
 int main(){
 
@@ -51,7 +55,7 @@ int main(){
             int id_lido;
 
             if (sscanf(linha, "%d %lf %lf", &id_lido, &xm, &ym) == 3){
-                mun[cont].id = id_lido;
+                mun[cont].id = id_lido - 1;
                 mun[cont].x = xm;
                 mun[cont].y = ym;
                 cont++;
@@ -61,8 +65,10 @@ int main(){
     }
     fclose(file);
 
-    for(int i = 0; i<NUM_CIDADES/2;i++){
-        AddDistancia(m,mun[i],mun[i++]);
+    for(int i = 0; i < NUM_CIDADES; i++){
+        for(int j = i+1; j < NUM_CIDADES; j++){
+            AddDistancia(m, mun[i], mun[j]);
+        }
     }
 
     acharPercurso(m);
@@ -77,7 +83,7 @@ Mapa iniciarMapa ( int cidade){
     return C;
 }
 
-static int **AddMatrix( int r, int c, int val) { 
+static float **AddMatrix( int r, int c, int val) { 
    int **m = malloc( r * sizeof (int *));
    for (vertice i = 0; i < r; ++i) 
       m[i] = malloc( c * sizeof (int));
@@ -106,7 +112,50 @@ void AddDistancia(Mapa m,cidade o, cidade c){
 }
 
 void acharPercurso(Mapa m){
-    int menorD = 2560000;
+    int *caminho = malloc(m->V * sizeof(int));
 
-    cidade raiz = 
+    VizinhoProximo(m, 0, caminho);
+
+    printf("Percurso final:\n");
+    for (int i = 0; i < m->V; i++)
+        printf("%d ", caminho[i]);
+    printf("\n");
+
+    printf("Distância total: %.3f\n", totalDist(m, caminho));
+}
+
+int VizinhoProximo(Mapa m , int ini, int *fim){    
+    int visitado[m->V];
+    for (int i = 0; i < m->V; i++) visitado[i] = 0;
+
+    visitado[ini] = 1;
+    fim[0] = ini;
+    int atual = ini;
+
+    for (int k = 1; k < m->V; k++) {
+        float melhor = 1e30;
+        int prox = -1;
+        for (int j = 0; j < m->V; j++) {
+            if (!visitado[j] && m->adj[atual][j] < melhor && atual != j) {
+                melhor = m->adj[atual][j];
+                prox = j;
+            }
+        }
+        fim[k] = prox;
+        visitado[prox] = 1;
+        atual = prox;
+    }
+    return 0;
+}
+
+float dist(Mapa m, int a, int b) {
+    return m->adj[a][b];
+}
+
+float totalDist(Mapa m, int *fim) {
+    float s = 0;
+    for (int i = 0; i < m->V - 1; i++)
+        s += m->adj[fim[i]][fim[i+1]];
+    s += m->adj[fim[m->V-1]][fim[0]];
+    return s;
 }
