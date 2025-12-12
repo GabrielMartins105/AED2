@@ -1,0 +1,112 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+
+#define vertice int
+#define NUM_CIDADES 400
+
+struct mapa{
+    int V;
+    int A;
+    int **adj;
+};
+
+typedef struct cidade{
+    int id;
+    float x;
+    float y;
+}cidade;
+
+typedef struct mapa *Mapa;
+
+Mapa iniciarMapa( int cidades);
+static int **AddMatrix( int r, int c, int val);
+void AddDistancia(Mapa m, cidade o, cidade c);
+void acharPercurso(Mapa m);
+
+int main(){
+
+    Mapa m = iniciarMapa(NUM_CIDADES);
+    
+    FILE* file;
+
+    file = fopen("cidades.tsp","r");
+
+    float buffer;
+    char linha[256];
+    int cord = 0;
+    int cont =0;
+
+    cidade *mun = (cidade *)malloc(NUM_CIDADES * sizeof(cidade));
+    
+    while(fgets(linha,256,file)!=EOF){
+        
+        if (strstr(linha, "NODE_COORD_SECTION")) {
+            cord = 1;
+            continue;
+        }
+
+        if (cord == 1){
+            float xm,ym;
+            int id_lido;
+
+            if (sscanf(linha, "%d %lf %lf", &id_lido, &xm, &ym) == 3){
+                mun[cont].id = id_lido;
+                mun[cont].x = xm;
+                mun[cont].y = ym;
+                cont++;
+
+            }
+        }
+    }
+    fclose(file);
+
+    for(int i = 0; i<NUM_CIDADES/2;i++){
+        AddDistancia(m,mun[i],mun[i++]);
+    }
+
+    acharPercurso(m);
+
+}
+
+Mapa iniciarMapa ( int cidade){
+    Mapa C = malloc(sizeof *C);
+    C->V = cidade;
+    C->A = 0;
+    C->adj = AddMatrix(cidade,cidade,0);
+    return C;
+}
+
+static int **AddMatrix( int r, int c, int val) { 
+   int **m = malloc( r * sizeof (int *));
+   for (vertice i = 0; i < r; ++i) 
+      m[i] = malloc( c * sizeof (int));
+   for (vertice i = 0; i < r; ++i)
+      for (vertice j = 0; j < c; ++j)
+         m[i][j] = val;
+   return m;
+}
+
+void AddDistancia(Mapa m,cidade o, cidade c){
+
+    if( m->adj[o.id][c.id] == 0){
+        float xo = o.x;
+        float yo = o.y;
+
+        float xc = c.x;
+        float yc = c.y;
+
+        float d = sqrt(pow(xo-xc, 2) + pow(yo-yc, 2));
+
+        m->adj[o.id][c.id] = d;
+        m->adj[c.id][o.id] = d;
+        m->A++;
+    }
+
+}
+
+void acharPercurso(Mapa m){
+    int menorD = 2560000;
+
+    cidade raiz = 
+}
